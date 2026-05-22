@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IoT Telemetry Dashboard — Pico 2 W</title>
+  <meta name="description" content="Real-time IoT telemetry dashboard for Raspberry Pi Pico 2 W — live speed, tilt, location tracking and incident log." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ─── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --bg-base:        #0a0d14;
+      --bg-surface:     #111520;
+      --bg-card:        #161c2d;
+      --bg-card-hover:  #1c2340;
+      --border:         rgba(99, 120, 255, 0.12);
+      --border-bright:  rgba(99, 120, 255, 0.35);
+
+      --accent:         #5b8fff;
+      --accent-soft:    rgba(91, 143, 255, 0.15);
+      --accent-glow:    rgba(91, 143, 255, 0.4);
+      --teal:           #00d4aa;
+      --teal-soft:      rgba(0, 212, 170, 0.15);
+      --amber:          #ffb830;
+      --amber-soft:     rgba(255, 184, 48, 0.15);
+      --red:            #ff4d6a;
+      --red-soft:       rgba(255, 77, 106, 0.15);
+      --green:          #2dd98f;
+      --green-soft:     rgba(45, 217, 143, 0.15);
+
+      --text-primary:   #e8ecf4;
+      --text-secondary: #8a93b2;
+      --text-muted:     #4a5270;
+
+      --radius-sm:      8px;
+      --radius-md:      14px;
+      --radius-lg:      20px;
+
+      --shadow-card:    0 4px 24px rgba(0, 0, 0, 0.45);
+      --shadow-glow:    0 0 32px rgba(91, 143, 255, 0.18);
+
+      --transition:     200ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ─── Reset & Base ──────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background-color: var(--bg-base);
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(91,143,255,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 90% 80%, rgba(0,212,170,0.06) 0%, transparent 50%);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    /* ─── Layout ────────────────────────────────────────────── */
+    .app-wrapper {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+    }
+
+    /* ─── Header ────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 28px 0 32px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 36px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--accent), var(--teal));
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: var(--shadow-glow);
+      flex-shrink: 0;
+    }
+
+    .header-title h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    .header-title p {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: var(--transition);
+      flex-shrink: 0;
+    }
+
+    .status-pill.connected .status-dot {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    .status-pill.connected { color: var(--green); border-color: rgba(45,217,143,0.25); }
+    .status-pill.error     { color: var(--red);   border-color: rgba(255,77,106,0.25); }
+    .status-pill.error .status-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ─── Section Titles ────────────────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .section-header h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .section-header .section-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .section-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(91,143,255,0.25);
+    }
+
+    /* ─── Widget Cards (Live Status) ────────────────────────── */
+    .widgets-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    .widget-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 22px 22px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: var(--shadow-card);
+      transition: border-color var(--transition), transform var(--transition), box-shadow var(--transition);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .widget-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.02), transparent);
+      pointer-events: none;
+    }
+
+    .widget-card:hover {
+      border-color: var(--border-bright);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-card), var(--shadow-glow);
+    }
+
+    .widget-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-secondary);
+    }
+
+    .widget-icon {
+      font-size: 15px;
+    }
+
+    .widget-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 2.4rem;
+      font-weight: 600;
+      line-height: 1;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .widget-value span.unit {
+      font-size: 0.9rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+      margin-left: 4px;
+    }
+
+    .widget-sublabel {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    /* Accent bar at top of card */
+    .widget-card.speed::after       { content:''; position:absolute; top:0;left:0;right:0;height:2px; background: linear-gradient(90deg, var(--accent), transparent); }
+    .widget-card.tilt::after        { content:''; position:absolute; top:0;left:0;right:0;height:2px; background: linear-gradient(90deg, var(--teal), transparent); }
+    .widget-card.accel::after       { content:''; position:absolute; top:0;left:0;right:0;height:2px; background: linear-gradient(90deg, var(--amber), transparent); }
+    .widget-card.location::after    { content:''; position:absolute; top:0;left:0;right:0;height:2px; background: linear-gradient(90deg, var(--green), transparent); }
+
+    /* Status flags */
+    .flag-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      transition: var(--transition);
+    }
+
+    .flag.ok    { background: var(--green-soft); color: var(--green); border-color: rgba(45,217,143,0.25); }
+    .flag.warn  { background: var(--red-soft);   color: var(--red);   border-color: rgba(255,77,106,0.25); }
+    .flag.amber { background: var(--amber-soft); color: var(--amber); border-color: rgba(255,184,48,0.25); }
+
+    /* Location coords */
+    .coord-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .coord-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    /* ─── Charts ────────────────────────────────────────────── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    @media (max-width: 800px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 22px;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: border-color var(--transition);
+    }
+
+    .chart-card:hover { border-color: var(--border-bright); }
+
+    .chart-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chart-title-text {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .chart-subtitle {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .chart-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .chart-dot.blue  { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+    .chart-dot.teal  { background: var(--teal);   box-shadow: 0 0 8px rgba(0,212,170,0.5); }
+    .chart-dot.amber { background: var(--amber);  box-shadow: 0 0 8px rgba(255,184,48,0.5); }
+
+    .chart-wrapper {
+      position: relative;
+      height: 200px;
+    }
+
+    /* ─── Incident Table ────────────────────────────────────── */
+    .incidents-section {
+      margin-bottom: 20px;
+    }
+
+    .table-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: var(--shadow-card);
+    }
+
+    .table-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .table-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .count-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--red-soft);
+      color: var(--red);
+      border: 1px solid rgba(255,77,106,0.25);
+    }
+
+    .btn-refresh {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(91,143,255,0.25);
+      color: var(--accent);
+      border-radius: var(--radius-sm);
+      padding: 6px 14px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn-refresh:hover {
+      background: rgba(91,143,255,0.25);
+      transform: translateY(-1px);
+    }
+
+    .btn-refresh:active { transform: translateY(0); }
+
+    .btn-refresh svg {
+      width: 14px;
+      height: 14px;
+      transition: transform 0.4s ease;
+    }
+
+    .btn-refresh.spinning svg { animation: spin 0.6s linear; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    thead th {
+      padding: 12px 20px;
+      text-align: left;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      transition: background var(--transition);
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+    tbody td {
+      padding: 13px 20px;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .td-mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+    }
+
+    .td-muted { color: var(--text-secondary); }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 48px 20px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .empty-state .empty-icon { font-size: 2rem; opacity: 0.5; }
+
+    /* ─── Skeleton shimmer ──────────────────────────────────── */
+    .skeleton {
+      display: inline-block;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--bg-surface) 25%, var(--bg-card-hover) 50%, var(--bg-surface) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+    }
+
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    /* ─── Toast ─────────────────────────────────────────────── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-card);
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      opacity: 0;
+      transform: translateY(12px);
+      animation: toast-in 0.25s ease forwards, toast-out 0.25s ease 3.5s forwards;
+      pointer-events: all;
+    }
+
+    .toast.err  { border-color: rgba(255,77,106,0.4); color: var(--red); }
+    .toast.warn { border-color: rgba(255,184,48,0.4); color: var(--amber); }
+
+    @keyframes toast-in  { to { opacity: 1; transform: translateY(0); } }
+    @keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
+
+    /* ─── Footer ────────────────────────────────────────────── */
+    footer {
+      text-align: center;
+      padding-top: 36px;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    footer span { color: var(--accent); }
+
+    /* ─── Scrollbar ─────────────────────────────────────────── */
+    ::-webkit-scrollbar       { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+  </style>
+</head>
+
+<body>
+  <div class="app-wrapper">
+
+    <!-- ─── Header ───────────────────────────────────────────── -->
+    <header>
+      <div class="header-left">
+        <div class="logo-icon" aria-hidden="true">📡</div>
+        <div class="header-title">
+          <h1>IoT Telemetry Dashboard</h1>
+          <p>Raspberry Pi Pico 2 W — Real-time Vehicle Monitoring</p>
+        </div>
+      </div>
+      <div id="connection-status" class="status-pill" role="status" aria-live="polite">
+        <div class="status-dot"></div>
+        <span id="status-text">Connecting…</span>
+      </div>
+    </header>
+
+    <!-- ─── Section 1: Live Status Widgets ───────────────────── -->
+    <section aria-labelledby="live-section-title" style="margin-bottom:40px">
+      <div class="section-header">
+        <h2 id="live-section-title">Live Status</h2>
+        <div class="section-line"></div>
+        <span class="section-badge" id="last-update-badge">Waiting…</span>
+      </div>
+
+      <div class="widgets-grid">
+        <!-- Speed Widget -->
+        <div class="widget-card speed" id="widget-speed">
+          <div class="widget-label"><span class="widget-icon">⚡</span> Speed</div>
+          <div class="widget-value" id="val-speed">
+            <span class="skeleton" style="width:80px;height:40px;display:block;border-radius:8px;"></span>
+          </div>
+          <div class="flag-row" id="flag-speed"></div>
+          <div class="widget-sublabel">Threshold: 60 km/h</div>
+        </div>
+
+        <!-- Tilt Widget -->
+        <div class="widget-card tilt" id="widget-tilt">
+          <div class="widget-label"><span class="widget-icon">📐</span> Tilt Angle</div>
+          <div class="widget-value" id="val-tilt">
+            <span class="skeleton" style="width:80px;height:40px;display:block;border-radius:8px;"></span>
+          </div>
+          <div class="widget-sublabel">Device orientation</div>
+        </div>
+
+        <!-- Acceleration Widget -->
+        <div class="widget-card accel" id="widget-accel">
+          <div class="widget-label"><span class="widget-icon">🔄</span> Acceleration</div>
+          <div class="widget-value" id="val-accel">
+            <span class="skeleton" style="width:80px;height:40px;display:block;border-radius:8px;"></span>
+          </div>
+          <div class="flag-row" id="flag-accel"></div>
+          <div class="widget-sublabel">Threshold: ±8 m/s²</div>
+        </div>
+
+        <!-- Location Widget -->
+        <div class="widget-card location" id="widget-location">
+          <div class="widget-label"><span class="widget-icon">📍</span> Location</div>
+          <div class="coord-row" id="val-location">
+            <span class="skeleton" style="width:140px;height:15px;display:block;border-radius:4px;"></span>
+            <span class="skeleton" style="width:140px;height:15px;display:block;border-radius:4px;margin-top:8px;"></span>
+          </div>
+          <div class="widget-sublabel">GPS Coordinates</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 2: Live Charts ────────────────────────────── -->
+    <section aria-labelledby="charts-section-title" style="margin-bottom:40px">
+      <div class="section-header">
+        <h2 id="charts-section-title">Live Charts</h2>
+        <div class="section-line"></div>
+        <span class="section-badge">Last 50 readings</span>
+      </div>
+
+      <div class="charts-grid">
+        <!-- Speed Chart -->
+        <div class="chart-card">
+          <div class="chart-title">
+            <div>
+              <div class="chart-title-text">Speed over Time</div>
+              <div class="chart-subtitle">km/h · Red line = 60 km/h limit</div>
+            </div>
+            <div class="chart-dot blue"></div>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="chart-speed" role="img" aria-label="Speed over time chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Tilt Chart -->
+        <div class="chart-card">
+          <div class="chart-title">
+            <div>
+              <div class="chart-title-text">Tilt Angle over Time</div>
+              <div class="chart-subtitle">Degrees · Positive = right lean</div>
+            </div>
+            <div class="chart-dot teal"></div>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="chart-tilt" role="img" aria-label="Tilt angle over time chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Acceleration Chart (full-width) -->
+        <div class="chart-card" style="grid-column: 1 / -1;">
+          <div class="chart-title">
+            <div>
+              <div class="chart-title-text">Acceleration over Time</div>
+              <div class="chart-subtitle">m/s² · Dashed lines = ±8 m/s² abrupt threshold</div>
+            </div>
+            <div class="chart-dot amber"></div>
+          </div>
+          <div class="chart-wrapper" style="height:180px">
+            <canvas id="chart-accel" role="img" aria-label="Acceleration over time chart"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 3: Incident Log ──────────────────────────── -->
+    <section class="incidents-section" aria-labelledby="incidents-section-title">
+      <div class="section-header">
+        <h2 id="incidents-section-title">Incident Log</h2>
+        <div class="section-line"></div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-toolbar">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="table-title">Overspeeding &amp; Abrupt Movement Events</span>
+            <span class="count-badge" id="incident-count" aria-live="polite">0 incidents</span>
+          </div>
+          <button class="btn-refresh" id="btn-refresh-incidents" aria-label="Refresh incident log">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+              <path d="M21 3v5h-5"/>
+              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+              <path d="M3 21v-5h5"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
+
+        <div class="table-scroll">
+          <table id="incidents-table" aria-label="Incident log table">
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Timestamp</th>
+                <th scope="col">Speed (km/h)</th>
+                <th scope="col">Accel (m/s²)</th>
+                <th scope="col">Tilt (°)</th>
+                <th scope="col">Latitude</th>
+                <th scope="col">Longitude</th>
+                <th scope="col">Overspeeding</th>
+                <th scope="col">Abrupt</th>
+              </tr>
+            </thead>
+            <tbody id="incidents-tbody">
+              <tr>
+                <td colspan="9">
+                  <div class="empty-state">
+                    <span class="empty-icon" aria-hidden="true">⏳</span>
+                    <span>Loading incidents…</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>IoT Telemetry Dashboard &mdash; Powered by <span>Node.js + Express + MySQL</span> &amp; <span>Chart.js</span></p>
+      <p style="margin-top:6px;">Polling live data every <span id="poll-interval-display">3s</span></p>
+    </footer>
+
+  </div>
+
+  <!-- ─── Toast Container ───────────────────────────────────── -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- ─── JavaScript ───────────────────────────────────────── -->
+  <script>
+    'use strict';
+
+    /* ══════════════════════════════════════════════════════════
+       Config
+    ══════════════════════════════════════════════════════════ */
+    const LIVE_POLL_MS    = 3000;   // live widget + chart refresh
+    const CHART_MAX_PTS   = 50;     // max data points on charts
+    const INCIDENT_MS     = 10000;  // incident table refresh
+
+    /* ══════════════════════════════════════════════════════════
+       DOM refs
+    ══════════════════════════════════════════════════════════ */
+    const elStatus      = document.getElementById('connection-status');
+    const elStatusText  = document.getElementById('status-text');
+    const elLastUpdate  = document.getElementById('last-update-badge');
+    const elValSpeed    = document.getElementById('val-speed');
+    const elValTilt     = document.getElementById('val-tilt');
+    const elValAccel    = document.getElementById('val-accel');
+    const elValLocation = document.getElementById('val-location');
+    const elFlagSpeed   = document.getElementById('flag-speed');
+    const elFlagAccel   = document.getElementById('flag-accel');
+    const elIncidentTbody  = document.getElementById('incidents-tbody');
+    const elIncidentCount  = document.getElementById('incident-count');
+    const btnRefresh    = document.getElementById('btn-refresh-incidents');
+
+    document.getElementById('poll-interval-display').textContent = `${LIVE_POLL_MS / 1000}s`;
+
+    /* ══════════════════════════════════════════════════════════
+       Toast
+    ══════════════════════════════════════════════════════════ */
+    function showToast(msg, type = '') {
+      const container = document.getElementById('toast-container');
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.textContent = msg;
+      container.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Connection status
+    ══════════════════════════════════════════════════════════ */
+    function setConnected(ok) {
+      if (ok) {
+        elStatus.className     = 'status-pill connected';
+        elStatusText.textContent = 'Live';
+      } else {
+        elStatus.className     = 'status-pill error';
+        elStatusText.textContent = 'Offline';
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Helpers
+    ══════════════════════════════════════════════════════════ */
+    function fmt(val, dp = 1) {
+      return (val === null || val === undefined) ? '—' : Number(val).toFixed(dp);
+    }
+
+    function fmtTimestamp(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toLocaleString(undefined, {
+        month:  'short', day: '2-digit',
+        hour:   '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      });
+    }
+
+    function timeAgo(ts) {
+      const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+      if (diff <  5)  return 'just now';
+      if (diff < 60)  return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      return `${Math.floor(diff / 3600)}h ago`;
+    }
+
+    function flagHtml(active, okLabel, warnLabel) {
+      if (active) return `<span class="flag warn">⚠ ${warnLabel}</span>`;
+      return `<span class="flag ok">✓ ${okLabel}</span>`;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Chart.js Setup
+    ══════════════════════════════════════════════════════════ */
+    const CHART_DEFAULTS = {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1c2340',
+          borderColor: 'rgba(99,120,255,0.3)',
+          borderWidth: 1,
+          titleColor: '#8a93b2',
+          bodyColor: '#e8ecf4',
+          padding: 10,
+          callbacks: {
+            title: items => fmtTimestamp(items[0].label),
+          },
+        },
+      },
+      scales: {
+        x: {
+          display: false,
+        },
+        y: {
+          grid:  { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#4a5270', font: { size: 11, family: 'JetBrains Mono' } },
+          border: { color: 'transparent' },
+        },
+      },
+    };
+
+    function makeDataset(color, label, glowColor) {
+      return {
+        label,
+        data: [],
+        borderColor: color,
+        backgroundColor: `${color}18`,
+        pointBackgroundColor: color,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+      };
+    }
+
+    /* Speed chart */
+    const speedChart = new Chart(
+      document.getElementById('chart-speed').getContext('2d'),
+      {
+        type: 'line',
+        data: { labels: [], datasets: [makeDataset('#5b8fff', 'Speed km/h')] },
+        options: {
+          ...JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+          plugins: {
+            ...JSON.parse(JSON.stringify(CHART_DEFAULTS.plugins)),
+            annotation: undefined,
+          },
+          scales: {
+            ...JSON.parse(JSON.stringify(CHART_DEFAULTS.scales)),
+            y: {
+              ...JSON.parse(JSON.stringify(CHART_DEFAULTS.scales.y)),
+              min: 0,
+            },
+          },
+        },
+      }
+    );
+
+    /* Tilt chart */
+    const tiltChart = new Chart(
+      document.getElementById('chart-tilt').getContext('2d'),
+      {
+        type: 'line',
+        data: { labels: [], datasets: [makeDataset('#00d4aa', 'Tilt °')] },
+        options: JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      }
+    );
+
+    /* Acceleration chart */
+    const accelChart = new Chart(
+      document.getElementById('chart-accel').getContext('2d'),
+      {
+        type: 'line',
+        data: { labels: [], datasets: [makeDataset('#ffb830', 'Accel m/s²')] },
+        options: JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+      }
+    );
+
+    /* Draw a static threshold line on speed chart (60 km/h) */
+    speedChart.options.plugins.beforeDraw = undefined;
+
+    const speedThresholdPlugin = {
+      id: 'speedThreshold',
+      afterDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
+        if (!y || typeof y.getPixelForValue !== 'function') return;
+        const yPixel = y.getPixelForValue(60);
+        if (yPixel < top || yPixel > bottom) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(255, 77, 106, 0.6)';
+        ctx.lineWidth   = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.moveTo(left, yPixel);
+        ctx.lineTo(right, yPixel);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255, 77, 106, 0.7)';
+        ctx.font      = '10px Inter, sans-serif';
+        ctx.fillText('60 km/h', right - 52, yPixel - 5);
+        ctx.restore();
+      },
+    };
+
+    const accelThresholdPlugin = {
+      id: 'accelThreshold',
+      afterDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
+        if (!y || typeof y.getPixelForValue !== 'function') return;
+        [8, -8].forEach(val => {
+          const yPixel = y.getPixelForValue(val);
+          if (yPixel < top || yPixel > bottom) return;
+          ctx.save();
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(255, 184, 48, 0.5)';
+          ctx.lineWidth   = 1.5;
+          ctx.setLineDash([6, 4]);
+          ctx.moveTo(left, yPixel);
+          ctx.lineTo(right, yPixel);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255, 184, 48, 0.7)';
+          ctx.font      = '10px Inter, sans-serif';
+          ctx.fillText(`${val > 0 ? '+' : ''}${val}`, right - 26, yPixel - 4);
+          ctx.restore();
+        });
+      },
+    };
+
+    Chart.register(speedThresholdPlugin, accelThresholdPlugin);
+
+    function pushToChart(chart, label, value) {
+      const ds = chart.data.datasets[0];
+      chart.data.labels.push(label);
+      ds.data.push(value);
+      if (chart.data.labels.length > CHART_MAX_PTS) {
+        chart.data.labels.shift();
+        ds.data.shift();
+      }
+      chart.update('none');
+    }
+
+    function loadHistoryIntoCharts(rows) {
+      // Reset
+      [speedChart, tiltChart, accelChart].forEach(c => {
+        c.data.labels = [];
+        c.data.datasets[0].data = [];
+      });
+      rows.forEach(row => {
+        const lbl = row.timestamp;
+        pushToChart(speedChart, lbl, row.speed);
+        pushToChart(tiltChart,  lbl, row.tilt_angle);
+        pushToChart(accelChart, lbl, row.acceleration);
+      });
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Live Widget Update
+    ══════════════════════════════════════════════════════════ */
+    async function fetchLive() {
+      try {
+        const res  = await fetch('/api/telemetry/live');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setConnected(true);
+
+        if (!data) {
+          elValSpeed.innerHTML    = '<span style="font-size:1.2rem;color:var(--text-muted)">No data yet</span>';
+          elValTilt.innerHTML     = '<span style="font-size:1.2rem;color:var(--text-muted)">—</span>';
+          elValAccel.innerHTML    = '<span style="font-size:1.2rem;color:var(--text-muted)">—</span>';
+          elValLocation.innerHTML = '<span class="coord-value" style="color:var(--text-muted)">Awaiting GPS fix</span>';
+          elLastUpdate.textContent = 'No data';
+          return;
+        }
+
+        // Speed
+        elValSpeed.innerHTML = `${fmt(data.speed)}<span class="unit">km/h</span>`;
+        elFlagSpeed.innerHTML = flagHtml(data.is_overspeeding, 'Normal', 'Overspeeding');
+
+        // Tilt
+        elValTilt.innerHTML = `${fmt(data.tilt_angle)}<span class="unit">°</span>`;
+
+        // Acceleration
+        elValAccel.innerHTML = `${fmt(data.acceleration, 2)}<span class="unit">m/s²</span>`;
+        elFlagAccel.innerHTML = flagHtml(data.is_abrupt, 'Smooth', 'Abrupt!');
+
+        // Location
+        if (data.latitude !== null && data.longitude !== null) {
+          elValLocation.innerHTML = `
+            <span class="coord-value">Lat: ${fmt(data.latitude, 5)}</span>
+            <span class="coord-value">Lng: ${fmt(data.longitude, 5)}</span>
+          `;
+        } else {
+          elValLocation.innerHTML = '<span class="coord-value" style="color:var(--text-muted)">GPS: No fix</span>';
+        }
+
+        // Badge
+        elLastUpdate.textContent = `Updated ${timeAgo(data.timestamp)}`;
+
+        // Push to chart
+        const lbl = data.timestamp;
+        pushToChart(speedChart, lbl, data.speed);
+        pushToChart(tiltChart,  lbl, data.tilt_angle);
+        pushToChart(accelChart, lbl, data.acceleration);
+
+        // Warn on incident
+        if (data.is_overspeeding) showToast('⚠ Overspeeding detected!', 'warn');
+        if (data.is_abrupt)       showToast('⚠ Abrupt movement detected!', 'warn');
+
+      } catch (err) {
+        setConnected(false);
+        console.error('Live fetch error:', err);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       History → initial chart fill
+    ══════════════════════════════════════════════════════════ */
+    async function fetchHistory() {
+      try {
+        const res  = await fetch('/api/telemetry/history');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const rows = await res.json();
+        loadHistoryIntoCharts(rows);
+      } catch (err) {
+        console.error('History fetch error:', err);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Incident Table
+    ══════════════════════════════════════════════════════════ */
+    function incidentRowHtml(row) {
+      const overspeed = row.is_overspeeding
+        ? '<span class="flag warn">⚠ Yes</span>'
+        : '<span class="flag ok">No</span>';
+      const abrupt = row.is_abrupt
+        ? '<span class="flag warn">⚠ Yes</span>'
+        : '<span class="flag ok">No</span>';
+
+      return `
+        <tr>
+          <td class="td-mono td-muted">#${row.id}</td>
+          <td class="td-muted">${fmtTimestamp(row.timestamp)}</td>
+          <td class="td-mono">${fmt(row.speed)}</td>
+          <td class="td-mono">${fmt(row.acceleration, 2)}</td>
+          <td class="td-mono">${fmt(row.tilt_angle)}</td>
+          <td class="td-mono td-muted">${row.latitude !== null ? fmt(row.latitude, 5) : '—'}</td>
+          <td class="td-mono td-muted">${row.longitude !== null ? fmt(row.longitude, 5) : '—'}</td>
+          <td>${overspeed}</td>
+          <td>${abrupt}</td>
+        </tr>`;
+    }
+
+    async function fetchIncidents() {
+      try {
+        const res  = await fetch('/api/telemetry/incidents');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const rows = await res.json();
+
+        elIncidentCount.textContent = `${rows.length} incident${rows.length !== 1 ? 's' : ''}`;
+
+        if (rows.length === 0) {
+          elIncidentTbody.innerHTML = `
+            <tr><td colspan="9">
+              <div class="empty-state">
+                <span class="empty-icon" aria-hidden="true">✅</span>
+                <span>No incidents recorded yet. All clear!</span>
+              </div>
+            </td></tr>`;
+        } else {
+          elIncidentTbody.innerHTML = rows.map(incidentRowHtml).join('');
+        }
+      } catch (err) {
+        console.error('Incidents fetch error:', err);
+        elIncidentTbody.innerHTML = `
+          <tr><td colspan="9">
+            <div class="empty-state">
+              <span class="empty-icon" aria-hidden="true">❌</span>
+              <span>Failed to load incidents. Check server connection.</span>
+            </div>
+          </td></tr>`;
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Refresh button
+    ══════════════════════════════════════════════════════════ */
+    btnRefresh.addEventListener('click', () => {
+      btnRefresh.classList.add('spinning');
+      fetchIncidents().finally(() => {
+        setTimeout(() => btnRefresh.classList.remove('spinning'), 600);
+      });
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       Boot sequence
+    ══════════════════════════════════════════════════════════ */
+    (async () => {
+      await fetchHistory();   // seed charts with existing data
+      await fetchLive();      // first live tick
+      await fetchIncidents(); // first incident load
+
+      // Polling loops
+      setInterval(fetchLive,      LIVE_POLL_MS);
+      setInterval(fetchIncidents, INCIDENT_MS);
+    })();
+  </script>
+</body>
+</html>
