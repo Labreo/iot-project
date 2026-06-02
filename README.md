@@ -293,6 +293,7 @@ No database changes are required — the flags are derived at insert time.
 | Section | Detail |
 |---------|--------|
 | **Live Status Widgets** | Speed · Tilt Angle · Acceleration · GPS coordinates. Polls `/api/telemetry/live` every **3 seconds**. |
+| **Live Map** | Interactive OpenStreetMap map powered by Leaflet.js that centers and marks the live location of the vehicle. Seeds itself from history on page load. |
 | **Speed Chart** | Line chart with a dashed red 60 km/h threshold line. |
 | **Tilt Angle Chart** | Line chart in teal showing device orientation. |
 | **Acceleration Chart** | Full-width line chart with dashed ±8 m/s² threshold lines. |
