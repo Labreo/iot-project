@@ -472,7 +472,54 @@
       <div id="map"></div>
     </section>
 
-    <!-- ─── Section 3: Live Charts ────────────────────────────── -->
+    <!-- ─── Section 3: Device Control ───────────────────────── -->
+    <section aria-labelledby="control-section-title" style="margin-bottom:40px">
+      <div class="section-header">
+        <h2 id="control-section-title">Device Control</h2>
+        <div class="section-line"></div>
+      </div>
+
+      <div class="charts-grid">
+        <!-- Queue Command Panel -->
+        <div class="chart-card">
+          <div class="chart-title">
+            <div class="chart-title-text">Send Command to Pico</div>
+            <div class="chart-subtitle">Queues a command. Pico will retrieve it on its next telemetry transmission.</div>
+          </div>
+          
+          <form id="form-command" style="display:flex; gap:10px; margin-top:15px;">
+            <select id="select-command" style="flex:1; padding:8px 12px; border:1px solid #ced4da; border-radius:4px; font-size:14px; font-family:inherit; background-color:#fff;">
+              <option value="LED_ON">LED_ON (Turn on board status LED)</option>
+              <option value="LED_OFF">LED_OFF (Turn off board status LED)</option>
+              <option value="RESET_ALERT">RESET_ALERT (Clear active alarm flags)</option>
+              <option value="SET_FREQ_1S">SET_FREQ_1S (Set telemetry poll to 1s)</option>
+              <option value="SET_FREQ_5S">SET_FREQ_5S (Set telemetry poll to 5s)</option>
+            </select>
+            <button type="submit" class="btn-refresh" style="background-color:#f8f9fa; color:#212529; border-color:#ced4da; padding: 8px 16px;">Queue</button>
+          </form>
+
+          <div style="margin-top: 15px; border-top: 1px dashed #dee2e6; padding-top: 15px;">
+            <button id="btn-kill-engine" style="width: 100%; padding: 10px; background-color: #dc3545; color: white; border: 1px solid #dc3545; border-radius: 4px; font-size: 14px; font-weight: bold; cursor: pointer; transition: background-color 0.2s;">
+              Emergency Kill Engine
+            </button>
+          </div>
+        </div>
+
+        <!-- Command Queue Status Panel -->
+        <div class="chart-card">
+          <div class="chart-title">
+            <div class="chart-title-text">Command Queue History</div>
+            <div class="chart-subtitle">Pending and recently executed commands</div>
+          </div>
+          
+          <div style="max-height: 150px; overflow-y: auto; margin-top:10px; font-size:13px;" id="command-queue-list">
+            <div class="empty-state" style="padding:10px;">Loading command list...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 4: Live Charts ────────────────────────────── -->
     <section aria-labelledby="charts-section-title" style="margin-bottom:40px">
       <div class="section-header">
         <h2 id="charts-section-title">Live Charts</h2>
@@ -1001,6 +1048,106 @@
     }
 
     /* ══════════════════════════════════════════════════════════
+       Device Control & Command Queue
+    ══════════════════════════════════════════════════════════ */
+    const elFormCommand = document.getElementById('form-command');
+    const elSelectCommand = document.getElementById('select-command');
+    const elCommandList = document.getElementById('command-queue-list');
+
+    async function fetchCommands() {
+      try {
+        const [pendingRes, historyRes] = await Promise.all([
+          fetch('/api/commands/pending'),
+          fetch('/api/commands/history')
+        ]);
+
+        if (!pendingRes.ok || !historyRes.ok) throw new Error('Failed to fetch commands');
+
+        const pending = await pendingRes.json();
+        const history = await historyRes.json();
+
+        if (pending.length === 0 && history.length === 0) {
+          elCommandList.innerHTML = `<div class="empty-state" style="padding:10px;">No commands in queue.</div>`;
+          return;
+        }
+
+        let html = '';
+
+        // Render Pending
+        pending.forEach(cmd => {
+          html += `
+            <div style="padding:8px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+              <div><strong>${cmd.command}</strong></div>
+              <div style="font-size:11px; color:#b27d00; background:#fff3cd; border:1px solid #ffe69c; padding:2px 6px; border-radius:4px; font-weight:bold;">Pending</div>
+            </div>`;
+        });
+
+        // Render History
+        history.forEach(cmd => {
+          html += `
+            <div style="padding:8px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; opacity:0.75;">
+              <div>
+                <strong>${cmd.command}</strong>
+                <div style="font-size:10px; color:#6c757d; margin-top:2px;">Sent: ${fmtTimestamp(cmd.sent_at)}</div>
+              </div>
+              <div style="font-size:11px; color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:2px 6px; border-radius:4px; font-weight:bold;">Sent</div>
+            </div>`;
+        });
+
+        elCommandList.innerHTML = html;
+      } catch (err) {
+        console.error('Fetch commands error:', err);
+        elCommandList.innerHTML = `<div class="empty-state" style="padding:10px; color:var(--red);">Failed to load command queue.</div>`;
+      }
+    }
+
+    if (elFormCommand) {
+      elFormCommand.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const command = elSelectCommand.value;
+        if (!command) return;
+
+        try {
+          const res = await fetch('/api/commands', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command })
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          showToast(`Command ${command} queued!`);
+          fetchCommands();
+        } catch (err) {
+          console.error('Queue command error:', err);
+          showToast('Failed to queue command.', 'err');
+        }
+      });
+    }
+
+    const btnKill = document.getElementById('btn-kill-engine');
+    if (btnKill) {
+      btnKill.addEventListener('click', async () => {
+        const confirmed = confirm("Are you sure you want to send the KILL command to the vehicle? This will shut down the engine.");
+        if (!confirmed) return;
+
+        try {
+          const res = await fetch('/api/commands', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: 'KILL' })
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          showToast("KILL command queued!");
+          fetchCommands();
+        } catch (err) {
+          console.error('Queue KILL command error:', err);
+          showToast('Failed to queue KILL command.', 'warn');
+        }
+      });
+    }
+
+    /* ══════════════════════════════════════════════════════════
        Refresh button
     ══════════════════════════════════════════════════════════ */
     btnRefresh.addEventListener('click', () => {
@@ -1018,10 +1165,12 @@
       await fetchHistory();   // seed charts with existing data
       await fetchLive();      // first live tick
       await fetchIncidents(); // first incident load
+      await fetchCommands();  // first command load
 
       // Polling loops
       setInterval(fetchLive,      LIVE_POLL_MS);
       setInterval(fetchIncidents, INCIDENT_MS);
+      setInterval(fetchCommands,  INCIDENT_MS);
     })();
   </script>
 </body>

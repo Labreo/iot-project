@@ -90,11 +90,27 @@ app.post('/api/telemetry', async (req, res) => {
       [speed, acceleration, tilt_angle, lat, lng, is_overspeeding, is_abrupt]
     );
 
+    // Check for pending commands to return in response
+    let pendingCommand = null;
+    const [commands] = await pool.execute(
+      `SELECT * FROM device_commands WHERE is_sent = FALSE ORDER BY id ASC LIMIT 1`
+    );
+    if (commands.length > 0) {
+      pendingCommand = commands[0];
+      // Mark it as sent
+      await pool.execute(
+        `UPDATE device_commands SET is_sent = TRUE, sent_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [pendingCommand.id]
+      );
+    }
+
     return res.status(201).json({
       id:             result.insertId,
       is_overspeeding,
       is_abrupt,
       message:        'Telemetry data recorded.',
+      warning:        is_overspeeding,
+      command:        pendingCommand ? pendingCommand.command : null,
     });
   } catch (err) {
     console.error('POST /api/telemetry error:', err.message);
@@ -151,6 +167,64 @@ app.get('/api/telemetry/incidents', async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error('GET /api/telemetry/incidents error:', err.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * POST /api/commands
+ * Queues a new command to be sent to the Pico 2 W.
+ */
+app.post('/api/commands', async (req, res) => {
+  try {
+    const { command } = req.body;
+    if (typeof command !== 'string' || command.trim() === '') {
+      return res.status(400).json({ error: 'Invalid command. command must be a non-empty string.' });
+    }
+
+    const [result] = await pool.execute(
+      `INSERT INTO device_commands (command) VALUES (?)`,
+      [command.trim()]
+    );
+
+    return res.status(201).json({
+      id: result.insertId,
+      message: 'Command queued successfully.',
+    });
+  } catch (err) {
+    console.error('POST /api/commands error:', err.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * GET /api/commands/pending
+ * Returns all un-sent commands.
+ */
+app.get('/api/commands/pending', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT * FROM device_commands WHERE is_sent = FALSE ORDER BY id ASC`
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error('GET /api/commands/pending error:', err.message);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * GET /api/commands/history
+ * Returns the last 15 sent commands.
+ */
+app.get('/api/commands/history', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT * FROM device_commands WHERE is_sent = TRUE ORDER BY id DESC LIMIT 15`
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error('GET /api/commands/history error:', err.message);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });

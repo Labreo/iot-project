@@ -23,3 +23,14 @@ CREATE TABLE IF NOT EXISTS device_logs (
   INDEX idx_overspeeding (is_overspeeding),
   INDEX idx_abrupt       (is_abrupt)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS device_commands (
+  id          INT          NOT NULL AUTO_INCREMENT,
+  command     VARCHAR(255) NOT NULL,
+  is_sent     BOOLEAN      NOT NULL DEFAULT FALSE,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at     DATETIME     NULL,
+
+  PRIMARY KEY (id),
+  INDEX idx_is_sent (is_sent)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
