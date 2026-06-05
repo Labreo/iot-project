@@ -48,6 +48,25 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Authentication (Bypassed by default) ──────────────────────────────────────
+const REQUIRE_AUTH = process.env.REQUIRE_AUTH === 'true';
+const HARDCODED_PASSWORD = process.env.DEVICE_PASSWORD || 'pico-secret-123';
+
+console.log(`🔒 Authentication status: ${REQUIRE_AUTH ? 'ENABLED' : 'DISABLED (Code ready)'}`);
+
+function authMiddleware(req, res, next) {
+  if (!REQUIRE_AUTH) {
+    return next();
+  }
+  const clientPassword = req.headers['x-device-password'] || req.body.password;
+  if (clientPassword === HARDCODED_PASSWORD) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Unauthorized. Invalid password.' });
+}
+
+app.use('/api', authMiddleware);
+
 // ─── Helper ────────────────────────────────────────────────────────────────────
 
 function detectAnomalies(speed, acceleration) {

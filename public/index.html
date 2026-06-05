@@ -920,11 +920,37 @@
     }
 
     /* ══════════════════════════════════════════════════════════
+       Authenticated Fetch Helper
+    ══════════════════════════════════════════════════════════ */
+    function getAuthHeaders(extraHeaders = {}) {
+      const headers = { ...extraHeaders };
+      const pwd = sessionStorage.getItem('dashboard_password') || '';
+      if (pwd) {
+        headers['x-device-password'] = pwd;
+      }
+      return headers;
+    }
+
+    async function fetchWithAuth(url, options = {}) {
+      options.headers = getAuthHeaders(options.headers);
+      let res = await fetch(url, options);
+      if (res.status === 401) {
+        const pwd = prompt("Authentication required. Please enter the dashboard password:");
+        if (pwd !== null) {
+          sessionStorage.setItem('dashboard_password', pwd);
+          options.headers = getAuthHeaders(options.headers);
+          res = await fetch(url, options);
+        }
+      }
+      return res;
+    }
+
+    /* ══════════════════════════════════════════════════════════
        Live Widget Update
     ══════════════════════════════════════════════════════════ */
     async function fetchLive() {
       try {
-        const res  = await fetch('/api/telemetry/live');
+        const res  = await fetchWithAuth('/api/telemetry/live');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setConnected(true);
@@ -984,7 +1010,7 @@
     ══════════════════════════════════════════════════════════ */
     async function fetchHistory() {
       try {
-        const res  = await fetch('/api/telemetry/history');
+        const res  = await fetchWithAuth('/api/telemetry/history');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const rows = await res.json();
         loadHistoryIntoCharts(rows);
@@ -1020,7 +1046,7 @@
 
     async function fetchIncidents() {
       try {
-        const res  = await fetch('/api/telemetry/incidents');
+        const res  = await fetchWithAuth('/api/telemetry/incidents');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const rows = await res.json();
 
@@ -1057,8 +1083,8 @@
     async function fetchCommands() {
       try {
         const [pendingRes, historyRes] = await Promise.all([
-          fetch('/api/commands/pending'),
-          fetch('/api/commands/history')
+          fetchWithAuth('/api/commands/pending'),
+          fetchWithAuth('/api/commands/history')
         ]);
 
         if (!pendingRes.ok || !historyRes.ok) throw new Error('Failed to fetch commands');
@@ -1108,7 +1134,7 @@
         if (!command) return;
 
         try {
-          const res = await fetch('/api/commands', {
+          const res = await fetchWithAuth('/api/commands', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command })
@@ -1131,7 +1157,7 @@
         if (!confirmed) return;
 
         try {
-          const res = await fetch('/api/commands', {
+          const res = await fetchWithAuth('/api/commands', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: 'KILL' })
