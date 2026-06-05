@@ -396,7 +396,19 @@
   </style>
 </head>
 
-<body>
+  <!-- ─── Authentication Overlay ───────────────────────────── -->
+  <div id="auth-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #f8f9fa; z-index: 2000; align-items: center; justify-content: center; flex-direction: column;">
+    <div style="background: white; padding: 30px; border: 1px solid #dee2e6; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 320px; text-align: center; font-family: system-ui, -apple-system, sans-serif;">
+      <h3 style="margin-bottom: 15px; font-weight: 600;">Dashboard Locked</h3>
+      <p style="font-size: 14px; color: #6c757d; margin-bottom: 20px;">Please enter the password to view telemetry.</p>
+      <form id="form-auth" style="display: flex; flex-direction: column; gap: 10px;">
+        <input type="password" id="input-auth-password" placeholder="Password" style="padding: 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px; font-family: inherit;" required />
+        <button type="submit" style="padding: 10px; background-color: #212529; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px; font-family: inherit;">Unlock</button>
+      </form>
+      <div id="auth-error" style="color: #dc3545; font-size: 12px; margin-top: 10px; display: none;">Invalid password. Please try again.</div>
+    </div>
+  </div>
+
   <div class="app-wrapper">
 
     <!-- ─── Header ───────────────────────────────────────────── -->
@@ -501,6 +513,9 @@
           <div style="margin-top: 15px; border-top: 1px dashed #dee2e6; padding-top: 15px;">
             <button id="btn-kill-engine" style="width: 100%; padding: 10px; background-color: #dc3545; color: white; border: 1px solid #dc3545; border-radius: 4px; font-size: 14px; font-weight: bold; cursor: pointer; transition: background-color 0.2s;">
               Emergency Kill Engine
+            </button>
+            <button id="btn-unkill-engine" style="display: none; width: 100%; margin-top: 10px; padding: 10px; background-color: #198754; color: white; border: 1px solid #198754; border-radius: 4px; font-size: 14px; font-weight: bold; cursor: pointer; transition: background-color 0.2s;">
+              Unkill Engine
             </button>
           </div>
         </div>
@@ -922,6 +937,19 @@
     /* ══════════════════════════════════════════════════════════
        Authenticated Fetch Helper
     ══════════════════════════════════════════════════════════ */
+    let failedQueue = [];
+
+    const processQueue = (error) => {
+      failedQueue.forEach(prom => {
+        if (error) {
+          prom.reject(error);
+        } else {
+          prom.resolve();
+        }
+      });
+      failedQueue = [];
+    };
+
     function getAuthHeaders(extraHeaders = {}) {
       const headers = { ...extraHeaders };
       const pwd = sessionStorage.getItem('dashboard_password') || '';
@@ -935,12 +963,19 @@
       options.headers = getAuthHeaders(options.headers);
       let res = await fetch(url, options);
       if (res.status === 401) {
-        const pwd = prompt("Authentication required. Please enter the dashboard password:");
-        if (pwd !== null) {
-          sessionStorage.setItem('dashboard_password', pwd);
-          options.headers = getAuthHeaders(options.headers);
-          res = await fetch(url, options);
-        }
+        // Show overlay
+        document.getElementById('auth-overlay').style.display = 'flex';
+        document.getElementById('input-auth-password').focus();
+
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: () => {
+              options.headers = getAuthHeaders(options.headers);
+              resolve(fetch(url, options));
+            },
+            reject: (err) => reject(err)
+          });
+        });
       }
       return res;
     }
@@ -1121,10 +1156,66 @@
         });
 
         elCommandList.innerHTML = html;
+
+        // Auto-show Unkill button for 10s if a KILL command was recently sent (executed)
+        const lastKill = history.find(cmd => cmd.command === 'KILL');
+        if (lastKill && lastKill.sent_at) {
+          const sentTime = new Date(lastKill.sent_at).getTime();
+          const now = Date.now();
+          if (now - sentTime < 10000) {
+            showUnkillButton();
+          }
+        }
       } catch (err) {
         console.error('Fetch commands error:', err);
         elCommandList.innerHTML = `<div class="empty-state" style="padding:10px; color:var(--red);">Failed to load command queue.</div>`;
       }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       Unkill Button Logic
+    ══════════════════════════════════════════════════════════ */
+    let unkillTimeout = null;
+
+    function showUnkillButton() {
+      const btnUnkill = document.getElementById('btn-unkill-engine');
+      if (!btnUnkill) return;
+      btnUnkill.style.display = 'block';
+      
+      if (unkillTimeout) clearTimeout(unkillTimeout);
+      unkillTimeout = setTimeout(() => {
+        btnUnkill.style.display = 'none';
+      }, 10000);
+    }
+
+    const elFormAuth = document.getElementById('form-auth');
+    if (elFormAuth) {
+      elFormAuth.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pwd = document.getElementById('input-auth-password').value;
+        const errEl = document.getElementById('auth-error');
+        const overlayEl = document.getElementById('auth-overlay');
+        if (!pwd) return;
+
+        try {
+          // Perform verification request using the live telemetry endpoint
+          const res = await fetch('/api/telemetry/live', {
+            headers: { 'x-device-password': pwd }
+          });
+          if (res.ok) {
+            sessionStorage.setItem('dashboard_password', pwd);
+            overlayEl.style.display = 'none';
+            errEl.style.display = 'none';
+            document.getElementById('input-auth-password').value = '';
+            processQueue(null);
+          } else {
+            errEl.style.display = 'block';
+          }
+        } catch (err) {
+          console.error('Auth verification error:', err);
+          errEl.style.display = 'block';
+        }
+      });
     }
 
     if (elFormCommand) {
@@ -1156,19 +1247,57 @@
         const confirmed = confirm("Are you sure you want to send the KILL command to the vehicle? This will shut down the engine.");
         if (!confirmed) return;
 
+        const pwd = prompt("WARNING: You are about to initiate an Emergency Engine Shutdown!\nPlease enter the authentication password to confirm:");
+        if (pwd === null) return; // User clicked Cancel
+        if (!pwd.trim()) {
+          showToast("KILL command canceled: Password cannot be empty.", "warn");
+          return;
+        }
+
         try {
-          const res = await fetchWithAuth('/api/commands', {
+          // Send request directly to verify the password specifically for this command
+          const res = await fetch('/api/commands', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'x-device-password': pwd.trim()
+            },
             body: JSON.stringify({ command: 'KILL' })
           });
 
+          if (res.status === 401) {
+            showToast("Failed to queue KILL command: Invalid password.", "warn");
+            return;
+          }
+
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           showToast("KILL command queued!");
+          showUnkillButton(); // Show green Unkill button for 10s
           fetchCommands();
         } catch (err) {
           console.error('Queue KILL command error:', err);
           showToast('Failed to queue KILL command.', 'warn');
+        }
+      });
+    }
+
+    const btnUnkill = document.getElementById('btn-unkill-engine');
+    if (btnUnkill) {
+      btnUnkill.addEventListener('click', async () => {
+        try {
+          const res = await fetch('/api/commands', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: 'UNKILL' })
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          showToast("UNKILL command queued!");
+          btnUnkill.style.display = 'none'; // Hide button immediately
+          fetchCommands();
+        } catch (err) {
+          console.error('Queue UNKILL command error:', err);
+          showToast('Failed to queue UNKILL command.', 'warn');
         }
       });
     }

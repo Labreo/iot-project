@@ -58,7 +58,7 @@ function authMiddleware(req, res, next) {
   if (!REQUIRE_AUTH) {
     return next();
   }
-  const clientPassword = req.headers['x-device-password'] || req.body.password;
+  const clientPassword = req.headers['x-device-password'] || (req.body && req.body.password) || req.query.password;
   if (clientPassword === HARDCODED_PASSWORD) {
     return next();
   }
@@ -201,9 +201,19 @@ app.post('/api/commands', async (req, res) => {
       return res.status(400).json({ error: 'Invalid command. command must be a non-empty string.' });
     }
 
+    const trimmedCmd = command.trim();
+
+    // Emergency KILL command MUST always be authenticated
+    if (trimmedCmd === 'KILL') {
+      const clientPassword = req.headers['x-device-password'] || (req.body && req.body.password) || req.query.password;
+      if (clientPassword !== HARDCODED_PASSWORD) {
+        return res.status(401).json({ error: 'Unauthorized. Invalid password for Emergency Engine Kill.' });
+      }
+    }
+
     const [result] = await pool.execute(
       `INSERT INTO device_commands (command) VALUES (?)`,
-      [command.trim()]
+      [trimmedCmd]
     );
 
     return res.status(201).json({
