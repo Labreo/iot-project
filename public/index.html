@@ -889,22 +889,49 @@
 
     let map = null;
     let marker = null;
+    let browserLocation = null;
 
     function initMap() {
       const mapContainer = document.getElementById('map');
       if (!mapContainer) return;
       
-      // Default to a global view
+      // Default to global view
       map = L.map('map').setView([0, 0], 2);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(map);
+
+      // Continuously monitor browser/device location to override telemetry defaults
+      if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(
+          (position) => {
+            browserLocation = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            };
+            console.log(`Browser coordinates updated: ${browserLocation.lat}, ${browserLocation.lng}`);
+            updateMap(browserLocation.lat, browserLocation.lng);
+          },
+          (error) => {
+            console.warn("Geolocation watch error or permission denied:", error.message);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      }
     }
 
     function updateMap(lat, lng) {
       if (!map) return;
-      const pos = [lat, lng];
+      
+      // Prioritize browser location over database values if available
+      const targetLat = browserLocation ? browserLocation.lat : lat;
+      const targetLng = browserLocation ? browserLocation.lng : lng;
+      
+      if (targetLat === null || targetLng === null) return;
+      
+      const pos = [targetLat, targetLng];
+      console.log(`Centering map on coordinates: ${targetLat}, ${targetLng} (Source: ${browserLocation ? 'Browser' : 'Device/Logs'})`);
       if (!marker) {
         marker = L.marker(pos).addTo(map);
         map.setView(pos, 15);
@@ -927,10 +954,12 @@
         pushToChart(accelChart, lbl, row.acceleration);
       });
 
-      // Center map on last known GPS location in history
+      // Center map on last known GPS location in history if browser position isn't loaded yet
       const lastRowWithGPS = [...rows].reverse().find(r => r.latitude !== null && r.longitude !== null);
-      if (lastRowWithGPS) {
-        updateMap(lastRowWithGPS.latitude, lastRowWithGPS.longitude);
+      const startLat = browserLocation ? browserLocation.lat : (lastRowWithGPS ? lastRowWithGPS.latitude : null);
+      const startLng = browserLocation ? browserLocation.lng : (lastRowWithGPS ? lastRowWithGPS.longitude : null);
+      if (startLat !== null && startLng !== null) {
+        updateMap(startLat, startLng);
       }
     }
 
@@ -1004,19 +1033,22 @@
         elFlagSpeed.innerHTML = flagHtml(data.is_overspeeding, 'Normal', 'Overspeeding');
 
         // Tilt
-        elValTilt.innerHTML = `${fmt(data.tilt_angle)}<span class="unit">°</span>`;
+        elValTilt.innerHTML = `${fmt(data.tilt_angle)}<spana class="unit">°</span>`;
 
         // Acceleration
         elValAccel.innerHTML = `${fmt(data.acceleration, 2)}<span class="unit">m/s²</span>`;
         elFlagAccel.innerHTML = flagHtml(data.is_abrupt, 'Smooth', 'Abrupt!');
 
         // Location
-        if (data.latitude !== null && data.longitude !== null) {
+        const displayLat = browserLocation ? browserLocation.lat : data.latitude;
+        const displayLng = browserLocation ? browserLocation.lng : data.longitude;
+
+        if (displayLat !== null && displayLng !== null) {
           elValLocation.innerHTML = `
-            <span class="coord-value">Lat: ${fmt(data.latitude, 5)}</span>
-            <span class="coord-value">Lng: ${fmt(data.longitude, 5)}</span>
+            <span class="coord-value">Lat: ${fmt(displayLat, 5)}</span>
+            <span class="coord-value">Lng: ${fmt(displayLng, 5)}</span>
           `;
-          updateMap(data.latitude, data.longitude);
+          updateMap(displayLat, displayLng);
         } else {
           elValLocation.innerHTML = '<span class="coord-value" style="color:var(--text-muted)">GPS: No fix</span>';
         }
